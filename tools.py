@@ -223,6 +223,64 @@ TOOLS = [
             },
             "required": []
         }
+    },
+    {
+        "name": "estimate_shipping_cost",
+        "description": "Estimate shipping cost for a shipment based on weight, origin warehouse, and destination state. Uses historical cost data patterns. Returns estimated cost, cost per lb, and comparison to historical averages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weight_lbs": {
+                    "type": "number",
+                    "description": "Shipment weight in pounds"
+                },
+                "from_warehouse": {
+                    "type": "string",
+                    "description": "Origin warehouse: 'Houston', 'West Memphis', or 'California'"
+                },
+                "to_state": {
+                    "type": "string",
+                    "description": "Destination state (e.g., 'TX', 'Virginia', 'CA')"
+                },
+                "transport_type": {
+                    "type": "string",
+                    "description": "Optional: 'Closed', 'Flatbed', or 'LTL'"
+                }
+            },
+            "required": ["weight_lbs", "from_warehouse", "to_state"]
+        }
+    },
+    {
+        "name": "compare_routing_cost",
+        "description": "Compare shipping costs between different warehouse routing options for a destination. Shows which warehouse offers the lowest cost and potential savings.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "weight_lbs": {
+                    "type": "number",
+                    "description": "Shipment weight in pounds"
+                },
+                "to_state": {
+                    "type": "string",
+                    "description": "Destination state (e.g., 'TX', 'Virginia')"
+                }
+            },
+            "required": ["weight_lbs", "to_state"]
+        }
+    },
+    {
+        "name": "analyze_cost_savings",
+        "description": "Analyze potential cost savings from routing optimization, warehouse consolidation, or an East Coast warehouse. Provides detailed examples with dollar amounts.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "scenario": {
+                    "type": "string",
+                    "description": "Scenario to analyze: 'routing_optimization', 'east_coast_warehouse', 'consolidation', or 'all'"
+                }
+            },
+            "required": []
+        }
     }
 ]
 
@@ -1185,6 +1243,285 @@ def recommend_east_coast_location(top_n: int = 5) -> Dict[str, Any]:
 
 
 # ============================================================================
+# COST ESTIMATION TOOLS
+# ============================================================================
+
+# Cost per lb by warehouse-state combination (from 2025 freight analysis)
+COST_RATES = {
+    'Houston': {
+        'TX': 0.0277, 'AR': 0.0344, 'MO': 0.0677, 'NE': 0.0713,
+        'VA': 0.1184, 'MA': 0.1390, 'NY': 0.1712,
+        'default': 0.0685  # Houston average
+    },
+    'West Memphis': {
+        'AL': 0.0375, 'IN': 0.0524, 'OH': 0.0673, 'WI': 0.0706,
+        'IL': 0.0773, 'NC': 0.0800, 'VA': 0.0836, 'MN': 0.0970,
+        'PA': 0.1001, 'TX': 0.1042,
+        'default': 0.0963  # West Memphis average
+    },
+    'California': {
+        'CA': 0.0247, 'AZ': 0.0645, 'OR': 0.0850, 'UT': 0.0909,
+        'ID': 0.1368, 'TX': 0.1520, 'NC': 0.1611, 'IL': 0.1669, 'FL': 0.1720,
+        'default': 0.0765  # California average
+    }
+}
+
+# Transport type modifiers
+TRANSPORT_MODIFIERS = {
+    'Closed': 0.89,    # 11% cheaper than average
+    'Flatbed': 1.00,   # Average
+    'LTL': 1.68,       # 68% more expensive
+    'Hot Shot': 3.87,  # Premium expedited
+}
+
+# State name to abbreviation mapping
+STATE_ABBREV = {
+    'ALABAMA': 'AL', 'ALASKA': 'AK', 'ARIZONA': 'AZ', 'ARKANSAS': 'AR',
+    'CALIFORNIA': 'CA', 'COLORADO': 'CO', 'CONNECTICUT': 'CT', 'DELAWARE': 'DE',
+    'FLORIDA': 'FL', 'GEORGIA': 'GA', 'HAWAII': 'HI', 'IDAHO': 'ID',
+    'ILLINOIS': 'IL', 'INDIANA': 'IN', 'IOWA': 'IA', 'KANSAS': 'KS',
+    'KENTUCKY': 'KY', 'LOUISIANA': 'LA', 'MAINE': 'ME', 'MARYLAND': 'MD',
+    'MASSACHUSETTS': 'MA', 'MICHIGAN': 'MI', 'MINNESOTA': 'MN', 'MISSISSIPPI': 'MS',
+    'MISSOURI': 'MO', 'MONTANA': 'MT', 'NEBRASKA': 'NE', 'NEVADA': 'NV',
+    'NEW HAMPSHIRE': 'NH', 'NEW JERSEY': 'NJ', 'NEW MEXICO': 'NM', 'NEW YORK': 'NY',
+    'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND', 'OHIO': 'OH', 'OKLAHOMA': 'OK',
+    'OREGON': 'OR', 'PENNSYLVANIA': 'PA', 'RHODE ISLAND': 'RI', 'SOUTH CAROLINA': 'SC',
+    'SOUTH DAKOTA': 'SD', 'TENNESSEE': 'TN', 'TEXAS': 'TX', 'UTAH': 'UT',
+    'VERMONT': 'VT', 'VIRGINIA': 'VA', 'WASHINGTON': 'WA', 'WEST VIRGINIA': 'WV',
+    'WISCONSIN': 'WI', 'WYOMING': 'WY'
+}
+
+
+def normalize_state(state: str) -> str:
+    """Convert state name to abbreviation"""
+    state_upper = state.upper().strip()
+    if len(state_upper) == 2:
+        return state_upper
+    return STATE_ABBREV.get(state_upper, state_upper[:2])
+
+
+def get_cost_rate(warehouse: str, state: str) -> float:
+    """Get cost per lb for a warehouse-state combination"""
+    state_abbr = normalize_state(state)
+    warehouse_rates = COST_RATES.get(warehouse, COST_RATES['West Memphis'])
+    return warehouse_rates.get(state_abbr, warehouse_rates['default'])
+
+
+def estimate_shipping_cost(weight_lbs: float, from_warehouse: str, to_state: str,
+                           transport_type: str = None) -> Dict[str, Any]:
+    """Estimate shipping cost for a shipment"""
+
+    # Normalize inputs
+    state_abbr = normalize_state(to_state)
+
+    # Match warehouse name
+    warehouse_map = {
+        'houston': 'Houston',
+        'west memphis': 'West Memphis',
+        'wm': 'West Memphis',
+        'california': 'California',
+        'stockton': 'California',
+        'ca': 'California'
+    }
+    warehouse = warehouse_map.get(from_warehouse.lower(), from_warehouse)
+
+    # Get base cost rate
+    base_rate = get_cost_rate(warehouse, state_abbr)
+
+    # Apply transport modifier
+    modifier = 1.0
+    if transport_type:
+        transport_upper = transport_type.title()
+        modifier = TRANSPORT_MODIFIERS.get(transport_upper, 1.0)
+
+    # Calculate cost
+    adjusted_rate = base_rate * modifier
+    estimated_cost = weight_lbs * adjusted_rate
+
+    # Get comparison data
+    overall_avg_rate = 0.0925  # Overall average from analysis
+    savings_vs_avg = (overall_avg_rate - adjusted_rate) * weight_lbs
+
+    return {
+        "estimate": {
+            "total_cost": round(estimated_cost, 2),
+            "cost_per_lb": round(adjusted_rate, 4),
+            "weight_lbs": weight_lbs
+        },
+        "route": {
+            "from_warehouse": warehouse,
+            "to_state": state_abbr,
+            "transport_type": transport_type or "Standard"
+        },
+        "comparison": {
+            "overall_avg_rate": overall_avg_rate,
+            "vs_average": f"{'$' + str(abs(round(savings_vs_avg, 2))) + ' cheaper' if savings_vs_avg > 0 else '$' + str(abs(round(savings_vs_avg, 2))) + ' more expensive'}",
+            "pct_vs_average": round((adjusted_rate / overall_avg_rate - 1) * 100, 1)
+        },
+        "confidence": "HIGH" if state_abbr in COST_RATES.get(warehouse, {}) else "MEDIUM",
+        "note": f"Based on 2025 freight data. {warehouse} → {state_abbr} historical rate: ${base_rate:.4f}/lb"
+    }
+
+
+def compare_routing_cost(weight_lbs: float, to_state: str) -> Dict[str, Any]:
+    """Compare shipping costs from different warehouses"""
+
+    state_abbr = normalize_state(to_state)
+
+    # Calculate cost from each warehouse
+    costs = {}
+    for warehouse in ['Houston', 'West Memphis', 'California']:
+        rate = get_cost_rate(warehouse, state_abbr)
+        costs[warehouse] = {
+            'cost': round(weight_lbs * rate, 2),
+            'rate': round(rate, 4)
+        }
+
+    # Find cheapest option
+    cheapest = min(costs.items(), key=lambda x: x[1]['cost'])
+    most_expensive = max(costs.items(), key=lambda x: x[1]['cost'])
+
+    # Calculate potential savings
+    max_savings = most_expensive[1]['cost'] - cheapest[1]['cost']
+
+    # Get recommended warehouse based on state routing rules
+    recommended = get_warehouse_for_state(to_state)
+    recommended_cost = costs[recommended]['cost']
+
+    return {
+        "destination": state_abbr,
+        "weight_lbs": weight_lbs,
+        "cost_comparison": [
+            {
+                "warehouse": wh,
+                "estimated_cost": data['cost'],
+                "cost_per_lb": data['rate'],
+                "is_cheapest": wh == cheapest[0],
+                "is_recommended": wh == recommended
+            }
+            for wh, data in sorted(costs.items(), key=lambda x: x[1]['cost'])
+        ],
+        "recommendation": {
+            "cheapest_option": cheapest[0],
+            "cheapest_cost": cheapest[1]['cost'],
+            "model_recommended": recommended,
+            "model_recommended_cost": recommended_cost,
+            "max_potential_savings": round(max_savings, 2),
+            "savings_pct": round((max_savings / most_expensive[1]['cost']) * 100, 1) if most_expensive[1]['cost'] > 0 else 0
+        },
+        "insight": f"Shipping from {cheapest[0]} to {state_abbr} is cheapest at ${cheapest[1]['cost']:,.2f}. " +
+                   f"Potential savings of ${max_savings:,.2f} ({round((max_savings / most_expensive[1]['cost']) * 100, 1)}%) vs {most_expensive[0]}."
+    }
+
+
+def analyze_cost_savings(scenario: str = "all") -> Dict[str, Any]:
+    """Analyze cost savings opportunities"""
+
+    results = {
+        "analysis_date": "2025",
+        "scenarios": []
+    }
+
+    # Scenario 1: Routing Optimization
+    if scenario in ["routing_optimization", "all"]:
+        routing_scenario = {
+            "name": "Routing Optimization",
+            "description": "Ship from optimal warehouse based on destination",
+            "examples": [
+                {
+                    "example": "Texas shipment (40,000 lbs)",
+                    "current": {"warehouse": "West Memphis", "cost": 40000 * 0.1042, "rate": 0.1042},
+                    "optimal": {"warehouse": "Houston", "cost": 40000 * 0.0277, "rate": 0.0277},
+                    "savings": round(40000 * (0.1042 - 0.0277), 2),
+                    "savings_pct": round((1 - 0.0277/0.1042) * 100, 1)
+                },
+                {
+                    "example": "California shipment (35,000 lbs)",
+                    "current": {"warehouse": "West Memphis", "cost": 35000 * 0.0963, "rate": 0.0963},
+                    "optimal": {"warehouse": "California", "cost": 35000 * 0.0247, "rate": 0.0247},
+                    "savings": round(35000 * (0.0963 - 0.0247), 2),
+                    "savings_pct": round((1 - 0.0247/0.0963) * 100, 1)
+                }
+            ],
+            "annual_opportunity": {
+                "texas_volume_lbs": 2559327,  # From freight analysis
+                "potential_savings": round(2559327 * (0.1042 - 0.0277), 2),
+                "note": "Based on 2025 TX shipment volume currently from West Memphis"
+            }
+        }
+        results["scenarios"].append(routing_scenario)
+
+    # Scenario 2: East Coast Warehouse
+    if scenario in ["east_coast_warehouse", "all"]:
+        east_coast_scenario = {
+            "name": "East Coast Warehouse",
+            "description": "Add warehouse in Charlotte/Atlanta area to serve East Coast",
+            "current_state": {
+                "east_coast_volume": 1981073,  # From east coast analysis
+                "east_coast_orders": 3950,
+                "current_warehouse": "West Memphis",
+                "avg_cost_per_lb": 0.0925
+            },
+            "with_east_coast": {
+                "estimated_local_rate": 0.035,  # Similar to Houston local rates
+                "coverage_states": ["NC", "SC", "GA", "VA", "FL", "TN", "AL"],
+                "estimated_coverage_pct": 65
+            },
+            "savings_estimate": {
+                "covered_volume": round(1981073 * 0.65),
+                "current_cost": round(1981073 * 0.65 * 0.0925, 2),
+                "new_cost": round(1981073 * 0.65 * 0.035, 2),
+                "annual_savings": round(1981073 * 0.65 * (0.0925 - 0.035), 2),
+                "savings_pct": round((1 - 0.035/0.0925) * 100, 1)
+            }
+        }
+        results["scenarios"].append(east_coast_scenario)
+
+    # Scenario 3: Consolidation
+    if scenario in ["consolidation", "all"]:
+        consolidation_scenario = {
+            "name": "Shipment Consolidation",
+            "description": "Consolidate LTL shipments into full truckloads",
+            "comparison": {
+                "ltl_rate": 0.1554,
+                "closed_trailer_rate": 0.0824,
+                "savings_per_lb": round(0.1554 - 0.0824, 4)
+            },
+            "example": {
+                "scenario": "5 LTL shipments of 8,000 lbs each → 1 full truckload of 40,000 lbs",
+                "ltl_cost": round(40000 * 0.1554, 2),
+                "consolidated_cost": round(40000 * 0.0824, 2),
+                "savings": round(40000 * (0.1554 - 0.0824), 2),
+                "savings_pct": round((1 - 0.0824/0.1554) * 100, 1)
+            },
+            "annual_opportunity": {
+                "note": "Review orders to same destination within 1-2 day window for consolidation"
+            }
+        }
+        results["scenarios"].append(consolidation_scenario)
+
+    # Summary
+    total_potential = 0
+    for s in results["scenarios"]:
+        if "annual_opportunity" in s and "potential_savings" in s["annual_opportunity"]:
+            total_potential += s["annual_opportunity"]["potential_savings"]
+        elif "savings_estimate" in s and "annual_savings" in s["savings_estimate"]:
+            total_potential += s["savings_estimate"]["annual_savings"]
+
+    results["summary"] = {
+        "total_identified_savings": round(total_potential, 2),
+        "key_actions": [
+            "Route Texas orders through Houston warehouse",
+            "Route West Coast orders through California warehouse",
+            "Evaluate East Coast warehouse for Southeast/Mid-Atlantic volume",
+            "Consolidate same-destination orders to reduce LTL shipments"
+        ]
+    }
+
+    return results
+
+
+# ============================================================================
 # TOOL EXECUTOR
 # ============================================================================
 
@@ -1200,7 +1537,10 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         "compare_routing": compare_routing,
         "recommend_east_coast_location": recommend_east_coast_location,
         "search_orders": search_orders,
-        "search_freight": search_freight
+        "search_freight": search_freight,
+        "estimate_shipping_cost": estimate_shipping_cost,
+        "compare_routing_cost": compare_routing_cost,
+        "analyze_cost_savings": analyze_cost_savings
     }
 
     if tool_name not in tools_map:
