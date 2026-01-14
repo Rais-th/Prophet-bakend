@@ -843,9 +843,10 @@ def load_freight_data(warehouse: str = "all") -> pd.DataFrame:
                     continue
                 try:
                     df = pd.read_excel(filepath, sheet_name=sheet)
-                    df['_warehouse'] = wh_name
-                    df['_sheet'] = sheet
-                    all_data.append(df)
+                    if not df.empty:
+                        df['_warehouse'] = wh_name
+                        df['_sheet'] = sheet
+                        all_data.append(df)
                 except:
                     pass
         except:
@@ -858,41 +859,124 @@ def load_freight_data(warehouse: str = "all") -> pd.DataFrame:
 
 def search_freight(warehouse: str = "all", date_range: str = None,
                    destination: str = None, limit: int = 10) -> Dict[str, Any]:
-    """Search freight shipments by warehouse, date, or destination"""
+    """
+    SMART freight search - Elon Musk level intelligence
+    - Fuzzy matching for customer/destination
+    - Auto-expands search if no results
+    - Cross-references dates to find best matches
+    - Suggests alternatives when exact match fails
+    """
     from datetime import datetime, timedelta
 
-    df = load_freight_data(warehouse)
+    df_full = load_freight_data("all")  # Always load all for smart search
 
-    if df.empty:
+    if df_full.empty:
         return {"error": "Could not load freight data"}
 
     # Standardize columns
-    df['ship_date'] = pd.to_datetime(df['Date Shipped'], errors='coerce')
-    df['destination'] = df['Ship to on SO'].fillna('').astype(str)
-    df['weight'] = pd.to_numeric(df['Weight'], errors='coerce').fillna(0)
-    df['cost'] = pd.to_numeric(df['Cost'], errors='coerce').fillna(0)
-    df['warehouse'] = df['_warehouse']
+    df_full['ship_date'] = pd.to_datetime(df_full['Date Shipped'], errors='coerce')
+    df_full['destination'] = df_full['Ship to on SO'].fillna('').astype(str)
+    df_full['weight'] = pd.to_numeric(df_full['Weight'], errors='coerce').fillna(0)
+    df_full['cost'] = pd.to_numeric(df_full['Cost'], errors='coerce').fillna(0)
+    df_full['warehouse'] = df_full['_warehouse']
+    df_full['state'] = df_full['destination'].str.strip().str[-2:].str.upper()
 
-    # Extract state from destination (last 2 chars)
-    df['state'] = df['destination'].str.strip().str[-2:].str.upper()
+    # Extract customer name (before the hyphen)
+    df_full['customer'] = df_full['destination'].str.split('-').str[0].str.strip()
+    df_full['city_state'] = df_full['destination'].str.split('-').str[-1].str.strip()
 
     filters_applied = []
+    smart_notes = []
+    df = df_full.copy()
 
-    # Filter by warehouse (already done in load)
+    # SMART WAREHOUSE FILTER
     if warehouse.lower() != 'all':
+        df = df[df['warehouse'].str.lower().str.contains(warehouse.lower())]
         filters_applied.append(f"warehouse = '{warehouse}'")
 
-    # Filter by destination
+    # SMART DESTINATION SEARCH
+    destination_matches_before_date = None
     if destination:
-        dest_upper = destination.upper()
-        # Check if it's a state abbreviation
+        dest_upper = destination.upper().strip()
+
+        # Strategy 1: Exact state match (2 chars)
         if len(dest_upper) == 2:
             df = df[df['state'] == dest_upper]
             filters_applied.append(f"state = '{dest_upper}'")
+
+        # Strategy 2: Detect "Customer-Location" pattern (e.g., "Anixter-Ashland VA")
+        elif '-' in dest_upper:
+            # User is searching for specific customer + location combo
+            parts = dest_upper.split('-')
+            search_customer = parts[0].strip()
+            search_location = '-'.join(parts[1:]).strip()
+
+            # Exact match first
+            exact_match = df[df['destination'].str.upper().str.contains(dest_upper, na=False)]
+
+            if len(exact_match) > 0:
+                df = exact_match
+                filters_applied.append(f"exact match '{destination}'")
+            else:
+                # Try customer + partial location
+                customer_match = df[df['customer'].str.upper().str.contains(search_customer, na=False)]
+                if len(customer_match) > 0:
+                    location_match = customer_match[customer_match['city_state'].str.upper().str.contains(search_location.replace(' ', ''), na=False)]
+                    if len(location_match) > 0:
+                        df = location_match
+                        filters_applied.append(f"customer '{search_customer}' + location '{search_location}'")
+                    else:
+                        # Just use customer match
+                        df = customer_match
+                        filters_applied.append(f"customer '{search_customer}'")
+                        smart_notes.append(f"Found {len(customer_match)} '{search_customer}' shipments, but none to '{search_location}'")
+
+                        # Show which locations this customer shipped to
+                        customer_locations = customer_match['destination'].unique()[:5]
+                        smart_notes.append(f"'{search_customer}' shipped to: {', '.join([loc[-15:] for loc in customer_locations])}")
+                else:
+                    # Fall back to location-only search
+                    location_match = df[df['destination'].str.upper().str.contains(search_location, na=False)]
+                    if len(location_match) > 0:
+                        df = location_match
+                        filters_applied.append(f"location contains '{search_location}'")
+                        smart_notes.append(f"No '{search_customer}' found, showing all shipments to '{search_location}'")
+
         else:
-            # Search in full destination string
-            df = df[df['destination'].str.upper().str.contains(dest_upper, na=False)]
-            filters_applied.append(f"destination contains '{destination}'")
+            # Strategy 3: Try customer name match first (fuzzy)
+            customer_match = df[df['customer'].str.upper().str.contains(dest_upper, na=False)]
+
+            if len(customer_match) > 0:
+                df = customer_match
+                filters_applied.append(f"customer contains '{destination}'")
+            else:
+                # Strategy 4: Try full destination match
+                dest_match = df[df['destination'].str.upper().str.contains(dest_upper, na=False)]
+
+                if len(dest_match) > 0:
+                    df = dest_match
+                    filters_applied.append(f"destination contains '{destination}'")
+                else:
+                    # Strategy 5: Try city match
+                    city_match = df[df['city_state'].str.upper().str.contains(dest_upper, na=False)]
+
+                    if len(city_match) > 0:
+                        df = city_match
+                        filters_applied.append(f"city contains '{destination}'")
+                    else:
+                        # Strategy 6: Fuzzy - try partial word match
+                        words = dest_upper.split()
+                        for word in words:
+                            if len(word) >= 3:
+                                partial_match = df[df['destination'].str.upper().str.contains(word, na=False)]
+                                if len(partial_match) > 0:
+                                    df = partial_match
+                                    filters_applied.append(f"partial match '{word}'")
+                                    smart_notes.append(f"No exact match for '{destination}', found partial match on '{word}'")
+                                    break
+
+        # Save matches before date filter for smart suggestions
+        destination_matches_before_date = df.copy()
 
     # Filter by date
     if date_range:
@@ -957,13 +1041,49 @@ def search_freight(warehouse: str = "all", date_range: str = None,
                         continue
 
         if start_date and end_date:
+            df_before_date = df.copy()
             df = df[(df['ship_date'] >= start_date) & (df['ship_date'] <= end_date)]
 
+            # SMART: If no results but we had destination matches, find when they DID ship
+            if len(df) == 0 and destination_matches_before_date is not None and len(destination_matches_before_date) > 0:
+                # Find the actual dates this destination shipped
+                actual_dates = destination_matches_before_date['ship_date'].dropna().sort_values()
+                if len(actual_dates) > 0:
+                    recent_dates = actual_dates.tail(5).dt.strftime('%Y-%m-%d').tolist()
+                    total_historical = len(destination_matches_before_date)
+                    total_weight = int(destination_matches_before_date['weight'].sum())
+
+                    # Get the closest date to what was searched
+                    search_date = start_date
+                    closest_date = min(actual_dates, key=lambda x: abs((x - search_date).days))
+
+                    smart_notes.append(f"No shipments on {start_date.strftime('%Y-%m-%d')}")
+                    smart_notes.append(f"But found {total_historical} shipments to this destination on other dates")
+                    smart_notes.append(f"Closest date: {closest_date.strftime('%Y-%m-%d')}")
+
+                    # Return the actual matches instead of empty
+                    df = destination_matches_before_date
+                    filters_applied = [f for f in filters_applied if 'date' not in f.lower()]
+                    filters_applied.append(f"Expanded search (no results for {start_date.strftime('%Y-%m-%d')})")
+
     if len(df) == 0:
+        # SMART: Suggest similar destinations if nothing found
+        suggestions = []
+        if destination:
+            # Find similar destination names
+            all_destinations = df_full['destination'].unique()
+            dest_upper = destination.upper()
+            for d in all_destinations:
+                if any(word in d.upper() for word in dest_upper.split() if len(word) >= 3):
+                    suggestions.append(d)
+            suggestions = list(set(suggestions))[:5]
+
         return {
             "filters": filters_applied,
             "total_shipments": 0,
-            "message": "No shipments found matching criteria"
+            "message": "No shipments found matching criteria",
+            "suggestions": suggestions if suggestions else None,
+            "smart_notes": smart_notes if smart_notes else None
         }
 
     # Calculate summary
@@ -1000,7 +1120,7 @@ def search_freight(warehouse: str = "all", date_range: str = None,
             "cost": round(row['cost'], 2) if row['cost'] > 0 else None
         })
 
-    return {
+    result = {
         "filters_applied": filters_applied,
         "summary": {
             "total_shipments": total_shipments,
@@ -1017,6 +1137,12 @@ def search_freight(warehouse: str = "all", date_range: str = None,
         ],
         "sample_shipments": sample_shipments
     }
+
+    # Include smart notes if any were generated
+    if smart_notes:
+        result["smart_notes"] = smart_notes
+
+    return result
 
 
 def recommend_east_coast_location(top_n: int = 5) -> Dict[str, Any]:
