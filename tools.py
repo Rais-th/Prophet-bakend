@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from analysis.east_coast_location import analyze_east_coast_locations
 
 # Import Google Maps optimizer
-from google_maps import optimize_shipment as google_optimize_shipment
+from google_maps import optimize_shipment as google_maps_func
 
 # File paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -294,7 +294,7 @@ TOOLS = [
         }
     },
     {
-        "name": "optimize_shipment",
+        "name": "google_maps",
         "description": "Find the optimal warehouse for a shipment using Google Maps. Looks up actual business address, calculates real distances from all warehouses, and recommends the cheapest route. Use for questions like 'Best warehouse for Georgia Power in Forest Park?' or 'Optimal route for AEP in Los Fresnos TX?'",
         "input_schema": {
             "type": "object",
@@ -1723,7 +1723,7 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         "estimate_shipping_cost": estimate_shipping_cost,
         "compare_routing_cost": compare_routing_cost,
         "analyze_cost_savings": analyze_cost_savings,
-        "optimize_shipment": google_optimize_shipment
+        "google_maps": google_maps_func
     }
 
     if tool_name not in tools_map:

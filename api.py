@@ -103,7 +103,7 @@ class CostSavingsRequest(BaseModel):
     scenario: Optional[str] = "all"
 
 
-class OptimizeShipmentRequest(BaseModel):
+class GoogleMapsRequest(BaseModel):
     destination: str
     weight_lbs: Optional[float] = 40000
 
@@ -214,8 +214,8 @@ async def api_analyze_cost_savings(req: CostSavingsRequest):
     return api_response(result)
 
 
-@app.post("/api/optimize-shipment")
-async def api_optimize_shipment(req: OptimizeShipmentRequest):
+@app.post("/api/google-maps")
+async def api_google_maps(req: GoogleMapsRequest):
     result = optimize_shipment(req.destination, req.weight_lbs)
     return api_response(result)
 
