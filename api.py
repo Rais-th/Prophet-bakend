@@ -24,6 +24,7 @@ from tools import (
     compare_routing_cost,
     analyze_cost_savings,
 )
+from google_maps import optimize_shipment
 
 app = FastAPI(
     title="Alpha Prophet API",
@@ -100,6 +101,11 @@ class RoutingCostRequest(BaseModel):
 
 class CostSavingsRequest(BaseModel):
     scenario: Optional[str] = "all"
+
+
+class OptimizeShipmentRequest(BaseModel):
+    destination: str
+    weight_lbs: Optional[float] = 40000
 
 
 # Helper to wrap responses
@@ -205,6 +211,12 @@ async def api_compare_routing_cost(req: RoutingCostRequest):
 @app.post("/api/analyze-cost-savings")
 async def api_analyze_cost_savings(req: CostSavingsRequest):
     result = analyze_cost_savings(req.scenario)
+    return api_response(result)
+
+
+@app.post("/api/optimize-shipment")
+async def api_optimize_shipment(req: OptimizeShipmentRequest):
+    result = optimize_shipment(req.destination, req.weight_lbs)
     return api_response(result)
 
 

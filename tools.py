@@ -14,6 +14,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Import East Coast location analyzer
 from analysis.east_coast_location import analyze_east_coast_locations
 
+# Import Google Maps optimizer
+from google_maps import optimize_shipment as google_optimize_shipment
+
 # File paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_2023 = os.path.join(BASE_DIR, 'Dataset', 'Sales 2023.xlsx')
@@ -288,6 +291,24 @@ TOOLS = [
                 }
             },
             "required": []
+        }
+    },
+    {
+        "name": "optimize_shipment",
+        "description": "Find the optimal warehouse for a shipment using Google Maps. Looks up actual business address, calculates real distances from all warehouses, and recommends the cheapest route. Use for questions like 'Best warehouse for Georgia Power in Forest Park?' or 'Optimal route for AEP in Los Fresnos TX?'",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "destination": {
+                    "type": "string",
+                    "description": "Destination in format 'CustomerName-City ST' (e.g., 'Georgia Power-Forest Park GA', 'AEP-Los Fresnos TX')"
+                },
+                "weight_lbs": {
+                    "type": "number",
+                    "description": "Shipment weight in pounds. Default 40,000 lbs (full truckload). Can also specify pallets * 920."
+                }
+            },
+            "required": ["destination"]
         }
     }
 ]
@@ -1701,7 +1722,8 @@ def execute_tool(tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         "search_freight": search_freight,
         "estimate_shipping_cost": estimate_shipping_cost,
         "compare_routing_cost": compare_routing_cost,
-        "analyze_cost_savings": analyze_cost_savings
+        "analyze_cost_savings": analyze_cost_savings,
+        "optimize_shipment": google_optimize_shipment
     }
 
     if tool_name not in tools_map:
