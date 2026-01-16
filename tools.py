@@ -1509,9 +1509,32 @@ def analyze_cost_savings(scenario: str = "all") -> Dict[str, Any]:
         "scenarios": []
     }
 
+    # Helper to standardize freight DataFrame columns
+    def standardize_freight_df(df):
+        if df.empty:
+            return df
+        df = df.copy()
+        df['destination'] = df['Ship to on SO'].fillna('').astype(str) if 'Ship to on SO' in df.columns else ''
+        df['weight'] = pd.to_numeric(df['Weight'], errors='coerce').fillna(0) if 'Weight' in df.columns else 0
+        # Try to find cost column
+        df['cost'] = 0.0
+        cost_columns = ['Cost', 'Total Cost', 'Freight Cost', 'Amount', 'Total', 'Charge', 'Freight']
+        for col in cost_columns:
+            if col in df.columns:
+                df['cost'] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                break
+        if df['cost'].sum() == 0:
+            for col in df.columns:
+                if 'cost' in col.lower() or 'freight' in col.lower() or 'amount' in col.lower():
+                    test_vals = pd.to_numeric(df[col], errors='coerce').fillna(0)
+                    if test_vals.sum() > 0:
+                        df['cost'] = test_vals
+                        break
+        return df
+
     # Load actual freight data
-    df_wm = load_freight_data("West Memphis")
-    df_all = load_freight_data("all")
+    df_wm = standardize_freight_df(load_freight_data("West Memphis"))
+    df_all = standardize_freight_df(load_freight_data("all"))
 
     # Extract state from destination (last 2 chars like "Fort Worth TX" -> "TX")
     def get_state(dest):
