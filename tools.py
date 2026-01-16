@@ -11,11 +11,19 @@ from typing import Dict, Any, List
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import East Coast location analyzer
-from analysis.east_coast_location import analyze_east_coast_locations
+# Import East Coast location analyzer (graceful fallback for deployment)
+try:
+    from analysis.east_coast_location import analyze_east_coast_locations
+except ImportError:
+    def analyze_east_coast_locations(*args, **kwargs):
+        return {"error": "East coast analysis not available in cloud deployment"}
 
 # Import Google Maps optimizer
-from google_maps import optimize_shipment as google_maps_func
+try:
+    from google_maps import optimize_shipment as google_maps_func
+except ImportError:
+    def google_maps_func(*args, **kwargs):
+        return {"error": "Google Maps not available"}
 
 # File paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

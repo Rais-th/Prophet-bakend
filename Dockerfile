@@ -11,7 +11,6 @@ COPY . .
 
 # Railway provides PORT env var
 ENV PORT=8000
-EXPOSE $PORT
 
-# Run FastAPI with uvicorn (uses $PORT from Railway)
-CMD uvicorn api:app --host 0.0.0.0 --port $PORT
+# Run FastAPI with uvicorn - shell form to expand $PORT
+CMD ["/bin/sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT}"]
