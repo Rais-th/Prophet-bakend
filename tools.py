@@ -25,17 +25,18 @@ except ImportError:
     def google_maps_func(*args, **kwargs):
         return {"error": "Google Maps not available"}
 
-# File paths
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_2023 = os.path.join(BASE_DIR, 'Dataset', 'Sales 2023.xlsx')
-DATA_2024 = os.path.join(BASE_DIR, 'Dataset', 'Sales 2024.xlsx')
-DATA_2025 = os.path.join(BASE_DIR, 'Dataset', '2025 YTD SALES_10.30.25.xlsx')
-BACKLOG_FILE = os.path.join(BASE_DIR, 'Backlog and freight', 'Backlog excel report(2).xlsx')
+# File paths - data folder inside cli for deployment
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+DATA_2023 = os.path.join(DATA_DIR, 'Sales 2023.xlsx')
+DATA_2024 = os.path.join(DATA_DIR, 'Sales 2024.xlsx')
+DATA_2025 = os.path.join(DATA_DIR, '2025 YTD SALES_10.30.25.xlsx')
+BACKLOG_FILE = os.path.join(DATA_DIR, 'Backlog excel report(2).xlsx')
 
 # Freight files
-FREIGHT_HOUSTON = os.path.join(BASE_DIR, 'Backlog and freight', 'Houston Freight 2025.xlsx')
-FREIGHT_WM = os.path.join(BASE_DIR, 'Backlog and freight', 'WM Freight 2025.xlsx')
-FREIGHT_STOCKTON = os.path.join(BASE_DIR, 'Backlog and freight', 'Stockton Freight 2025.xlsx')
+FREIGHT_HOUSTON = os.path.join(DATA_DIR, 'Houston Freight 2025.xlsx')
+FREIGHT_WM = os.path.join(DATA_DIR, 'WM Freight 2025.xlsx')
+FREIGHT_STOCKTON = os.path.join(DATA_DIR, 'Stockton Freight 2025.xlsx')
 
 # State to warehouse mapping (v3.1 Smart Routing)
 CALIFORNIA_STATES = ['CALIFORNIA', 'OREGON', 'WASHINGTON', 'IDAHO', 'CA', 'OR', 'WA', 'ID']
