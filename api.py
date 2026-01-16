@@ -8,23 +8,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Any
 import uvicorn
+import os
 
-# Import all tools
-from tools import (
-    get_distribution,
-    analyze_state,
-    get_warehouse_info,
-    forecast_demand,
-    get_backlog_summary,
-    compare_routing,
-    recommend_east_coast_location,
-    search_orders,
-    search_freight,
-    estimate_shipping_cost,
-    compare_routing_cost,
-    analyze_cost_savings,
-)
-from google_maps import optimize_shipment
+# Graceful imports for cloud deployment
+def _stub(*args, **kwargs):
+    return {"error": "Function not available in cloud deployment"}
+
+try:
+    from tools import (
+        get_distribution,
+        analyze_state,
+        get_warehouse_info,
+        forecast_demand,
+        get_backlog_summary,
+        compare_routing,
+        recommend_east_coast_location,
+        search_orders,
+        search_freight,
+        estimate_shipping_cost,
+        compare_routing_cost,
+        analyze_cost_savings,
+    )
+except ImportError as e:
+    print(f"Warning: Could not import tools: {e}")
+    get_distribution = analyze_state = get_warehouse_info = _stub
+    forecast_demand = get_backlog_summary = compare_routing = _stub
+    recommend_east_coast_location = search_orders = search_freight = _stub
+    estimate_shipping_cost = compare_routing_cost = analyze_cost_savings = _stub
+
+try:
+    from google_maps import optimize_shipment
+except ImportError as e:
+    print(f"Warning: Could not import google_maps: {e}")
+    optimize_shipment = _stub
 
 app = FastAPI(
     title="Alpha Prophet API",
@@ -33,7 +49,6 @@ app = FastAPI(
 )
 
 # CORS for Next.js frontend (local + Vercel)
-import os
 CORS_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
