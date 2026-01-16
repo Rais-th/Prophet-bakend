@@ -9,12 +9,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
-# Make start script executable
-COPY start.sh .
-RUN chmod +x start.sh
-
 # Railway provides PORT env var
 ENV PORT=8000
 
-# Run via start script
-ENTRYPOINT ["./start.sh"]
+# Run uvicorn via Python to avoid shell issues
+CMD ["python", "-c", "import os; import uvicorn; uvicorn.run('api:app', host='0.0.0.0', port=int(os.environ.get('PORT', 8000)))"]
