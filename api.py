@@ -32,10 +32,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS for Next.js frontend
+# CORS for Next.js frontend (local + Vercel)
+import os
+CORS_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    os.getenv("FRONTEND_URL", "https://alpha-prophet.vercel.app"),
+]
+# Allow any Vercel preview deployments
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=CORS_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
