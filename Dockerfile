@@ -9,8 +9,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
+# Make start script executable
+COPY start.sh .
+RUN chmod +x start.sh
+
 # Railway provides PORT env var
 ENV PORT=8000
 
-# Run FastAPI with uvicorn - shell form to expand $PORT
-CMD ["/bin/sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT}"]
+# Run via start script
+ENTRYPOINT ["./start.sh"]
